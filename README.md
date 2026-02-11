@@ -1,67 +1,72 @@
-# Veloce: A Version Control System
+# Veloce
 
-Veloce is a version control system (VCS) built using C, designed to provide users with a fast and efficient way to manage their projects and codebase. The name "Veloce" is derived from the Indonesian word "velo" meaning version and Italian word "veloce" meaning swift or fast, reflecting its core philosophy of speed and efficiency.
+Veloce is a portable terminal-based version control prototype written in C.
+It supports account management, repository management, commit history, and revert workflows while persisting data locally.
 
-This project was developed as part of the ACES C-Project Demonstration.
+## What Works
 
-## Team Members
+- Signup, login, and password reset with salted SHA-256 hashes.
+- Repository creation and listing per user account.
+- Repository initialization with either:
+  - an existing tracked file, or
+  - a new tracked file created in the local workspace.
+- Commit creation with message and file snapshot storage.
+- Commit history viewing.
+- Reverting tracked file content to a previous commit (and recording that revert as a new commit).
 
-- [Kaushal Rijal](https://github.com/kaushalrijal)
-- [Hariom Raj Chauhan](https://github.com/HariomRajChauhan)
-- [Kaushal Kumar Roy](https://github.com/Prashantt6)
-- [Guru Prakash Gupta](https://github.com/satguru117)
+## Cross-Platform Support
 
-## Features
+The app is implemented for:
 
-- **User Authentication:** Veloce allows users to sign up for an account and log in securely.
-- **Repository Management:** Users can create repositories to organize their projects and code.
-- **Commit Creation:** Veloce enables users to create commits to track changes in their codebase.
-- **Commit Viewing:** Users can view commit history to understand the evolution of their projects.
-- **Commit Reversion:** Veloce supports reverting to previous commits to roll back changes if needed.
-- **Security Measures:** Veloce incorporates security features such as security questions and encrypted passwords to ensure user data remains protected.
+- macOS
+- Linux
+- Windows
 
-## File Structure
+Platform-specific operations (`getch`, clear screen, sleep, directory creation) are wrapped behind portable helpers.
 
-- `main.c`: Contains the main function and orchestrates the overall flow of the program.
-- `auth.c`: Handles user authentication and account management functionalities.
-- `loading.c`: Manages loading and saving of user data using binary files with a `.dat` extension.
-- `commits.c`: Implements commit creation, viewing, and reversion functionalities.
-- `repos.c`: Handles repository management operations.
+## Build
 
-## Usage
+### Option 1: Make
 
-### Cloning and Building the Code
+```bash
+make
+./vcs
+```
 
-To clone and build the Veloce code, follow these steps:
+Sanitizer build:
 
-1. **Clone the Repository:**
+```bash
+make sanitize
+./vcs
+```
 
-   ```bash
-   git clone https://github.com/kaushalrijal/Veloce
-   cd Veloce
-   ```
+### Option 2: CMake
 
-2. **Build the Code:**
-   Use the following command to compile the source files using `gcc`:
+```bash
+cmake -S . -B build
+cmake --build build
+./build/vcs
+```
 
-   ```bash
-   gcc -o vcs main.c commits.c auth.c repos.c loading.c
-   ```
+On Windows:
 
-3. **Run Veloce:**
-   After successfully building the code, you can run the compiled executable:
-   ```bash
-   ./vcs
-   ```
-   or if you're on Windows:
-   ```bash
-   vcs.exe
-   ```
+```powershell
+.\build\Debug\vcs.exe
+```
 
-### Basic Workflow
+## Storage Layout
 
-1. **Sign Up/Login:** Create a new account or log in with existing credentials.
-2. **Create Repositories:** Organize your projects by creating repositories.
-3. **Make Commits:** Track changes to your codebase by creating commits.
-4. **View Commit History:** Understand the evolution of your projects by viewing commit history.
-5. **Revert to Commits:** Roll back changes if needed by reverting to previous commits.
+All runtime data is stored under `.veloce/` in the project root by default:
+
+- `.veloce/users.db`
+- `.veloce/repos.db`
+- `.veloce/commits.db`
+- `.veloce/snapshots/`
+- `.veloce/workspace/`
+
+You can override the storage directory by setting `VELOCE_HOME`.
+
+## Notes
+
+- This is a learning project and not a replacement for Git.
+- Hashing is implemented with a local SHA-256 routine and salt; no plaintext credentials are stored.
