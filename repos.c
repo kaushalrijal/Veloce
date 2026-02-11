@@ -1,161 +1,359 @@
-#include <stdio.h>
-#include <conio.h>
-#include <stdlib.h>
-#include <string.h.>
 #include "vcs.h"
 
-struct user
-{
-    char name[30];
-    char username[15];
-    char password[50];
-    char sec_qstn[100];
-    char ans[30];
-    char uid[17];
-};
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-struct repos
+static int split_fields(char *line, char *fields[], size_t expected)
 {
-    char uid[17];
-    char name[50];
+    size_t count = 0U;
+    char *start = line;
+    char *p;
+
+    for (p = line; ; p++)
+    {
+        if (*p == '|' || *p == '\0')
+        {
+            if (count >= expected)
+            {
+                return 0;
+            }
+            fields[count++] = start;
+            if (*p == '\0')
+            {
+                break;
+            }
+            *p = '\0';
+            start = p + 1;
+        }
+    }
+
+    return count == expected;
+}
+
+static int repos_db_path(char path[VELOCE_PATH_LEN + 1])
+{
+    return path_join(path, VELOCE_PATH_LEN + 1U, storage_root(), VELOCE_REPOS_DB);
+}
+
+static int parse_repo_line(const char *line, RepoRecord *repo)
+{
+    char scratch[2048];
+    char *fields[7];
+
+    if (line == NULL || repo == NULL)
+    {
+        return 0;
+    }
+
+    if (snprintf(scratch, sizeof(scratch), "%s", line) >= (int)sizeof(scratch))
+    {
+        return 0;
+    }
+
+    if (!split_fields(scratch, fields, 7U))
+    {
+        return 0;
+    }
+
+    (void)snprintf(repo->id, sizeof(repo->id), "%s", fields[0]);
+    (void)snprintf(repo->owner_uid, sizeof(repo->owner_uid), "%s", fields[1]);
+    repo->rid = atoi(fields[2]);
+    (void)snprintf(repo->name, sizeof(repo->name), "%s", fields[3]);
+    repo->initialized = atoi(fields[4]);
+    (void)snprintf(repo->tracked_file, sizeof(repo->tracked_file), "%s", fields[5]);
+    (void)snprintf(repo->created_at, sizeof(repo->created_at), "%s", fields[6]);
+
+    return 1;
+}
+
+static int write_repo_line(FILE *fp, const RepoRecord *repo)
+{
+    if (fp == NULL || repo == NULL)
+    {
+        return 0;
+    }
+
+    return fprintf(fp,
+                   "%s|%s|%d|%s|%d|%s|%s\n",
+                   repo->id,
+                   repo->owner_uid,
+                   repo->rid,
+                   repo->name,
+                   repo->initialized,
+                   repo->tracked_file,
+                   repo->created_at) > 0;
+}
+
+static int append_repo(const RepoRecord *repo)
+{
+    char path[VELOCE_PATH_LEN + 1];
+    FILE *fp;
+    int ok;
+
+    if (repos_db_path(path) != 0)
+    {
+        return 0;
+    }
+
+    fp = fopen(path, "ab");
+    if (fp == NULL)
+    {
+        return 0;
+    }
+
+    ok = write_repo_line(fp, repo);
+    fclose(fp);
+    return ok;
+}
+
+static int next_repo_id_for_owner(const char *owner_uid)
+{
+    char path[VELOCE_PATH_LEN + 1];
+    FILE *fp;
+    char line[2048];
+    int max_rid = 0;
+
+    if (repos_db_path(path) != 0)
+    {
+        return 1;
+    }
+
+    fp = fopen(path, "rb");
+    if (fp == NULL)
+    {
+        return 1;
+    }
+
+    while (fgets(line, sizeof(line), fp) != NULL)
+    {
+        RepoRecord repo;
+
+        line[strcspn(line, "\r\n")] = '\0';
+        if (!parse_repo_line(line, &repo))
+        {
+            continue;
+        }
+
+        if (strcmp(repo.owner_uid, owner_uid) == 0 && repo.rid > max_rid)
+        {
+            max_rid = repo.rid;
+        }
+    }
+
+    fclose(fp);
+    return max_rid + 1;
+}
+
+static void create_repo(const Session *session)
+{
+    RepoRecord repo;
+
+    app_clear_screen();
+    (void)printf("Create repository\n\n");
+
+    if (!read_line("Repository name: ", repo.name, sizeof(repo.name)))
+    {
+        return;
+    }
+    sanitize_field(repo.name);
+
+    if (repo.name[0] == '\0')
+    {
+        (void)printf("Repository name cannot be empty.\n");
+        app_pause(NULL);
+        return;
+    }
+
+    generate_id(repo.id);
+    (void)snprintf(repo.owner_uid, sizeof(repo.owner_uid), "%s", session->uid);
+    repo.rid = next_repo_id_for_owner(session->uid);
+    repo.initialized = 0;
+    repo.tracked_file[0] = '\0';
+    now_timestamp(repo.created_at);
+
+    if (!append_repo(&repo))
+    {
+        (void)printf("Failed to create repository.\n");
+        app_pause(NULL);
+        return;
+    }
+
+    (void)printf("Repository created as #%d (%s).\n", repo.rid, repo.name);
+    app_pause(NULL);
+}
+
+static int load_repo_for_owner(const char *owner_uid, int rid, RepoRecord *result)
+{
+    char path[VELOCE_PATH_LEN + 1];
+    FILE *fp;
+    char line[2048];
+
+    if (repos_db_path(path) != 0)
+    {
+        return 0;
+    }
+
+    fp = fopen(path, "rb");
+    if (fp == NULL)
+    {
+        return 0;
+    }
+
+    while (fgets(line, sizeof(line), fp) != NULL)
+    {
+        RepoRecord repo;
+
+        line[strcspn(line, "\r\n")] = '\0';
+        if (!parse_repo_line(line, &repo))
+        {
+            continue;
+        }
+
+        if (strcmp(repo.owner_uid, owner_uid) == 0 && repo.rid == rid)
+        {
+            *result = repo;
+            fclose(fp);
+            return 1;
+        }
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+static void view_repos(const Session *session)
+{
+    char path[VELOCE_PATH_LEN + 1];
+    FILE *fp;
+    char line[2048];
+    int count = 0;
+
+    app_clear_screen();
+    (void)printf("Your repositories\n\n");
+
+    if (repos_db_path(path) != 0)
+    {
+        (void)printf("Failed to access repository database.\n");
+        app_pause(NULL);
+        return;
+    }
+
+    fp = fopen(path, "rb");
+    if (fp == NULL)
+    {
+        (void)printf("Failed to access repository database.\n");
+        app_pause(NULL);
+        return;
+    }
+
+    while (fgets(line, sizeof(line), fp) != NULL)
+    {
+        RepoRecord repo;
+
+        line[strcspn(line, "\r\n")] = '\0';
+        if (!parse_repo_line(line, &repo))
+        {
+            continue;
+        }
+
+        if (strcmp(repo.owner_uid, session->uid) == 0)
+        {
+            count++;
+            (void)printf("%d) #%d  %s", count, repo.rid, repo.name);
+            if (repo.initialized)
+            {
+                (void)printf("  [initialized]");
+            }
+            (void)printf("\n");
+        }
+    }
+
+    fclose(fp);
+
+    if (count == 0)
+    {
+        (void)printf("No repositories yet.\n");
+    }
+
+    app_pause(NULL);
+}
+
+static int open_repo(const Session *session, RepoRecord *opened)
+{
     int rid;
-    char id[17];
-    int initialized;
-    char fpath[250];
-};
 
-struct user usr;
-int openflag = 0;
+    app_clear_screen();
+    (void)printf("Open repository\n\n");
 
-int repo(struct user, struct repos *);
-void create_repo();
-void view_repos();
-void open_repo();
+    if (!read_int("Repository id (#): ", &rid))
+    {
+        (void)printf("Please provide a valid repository id.\n");
+        app_pause(NULL);
+        return 0;
+    }
 
-void create_repo()
-{
-    system("cls");
-    FILE *fptr;
-    struct repos r;
-    fptr = fopen("repos.dat", "ab+");
-    if (fptr == NULL)
+    if (!load_repo_for_owner(session->uid, rid, opened))
     {
-        printf("An unexpected error occured");
-        exit(0);
+        (void)printf("Repository #%d was not found.\n", rid);
+        app_pause(NULL);
+        return 0;
     }
-    printf("Enter repository name:\n>>>\t");
-    scanf(" %[^\n]", r.name);
-    printf("Enter an id for your repository. Don't use same id on two repositories to avoid conflicts.\n>>>\t");
-    scanf("%d", &r.rid);
-    strcpy(r.uid, usr.uid);
-    r.initialized = 0;
-    random(r.id);
-    if (fwrite(&r, sizeof(r), 1, fptr) == 1)
-    {
-        printf("\nRepository succesfully created!");
-        fclose(fptr);
-    }
-    else
-    {
-        fclose(fptr);
-        printf("\nFailed to create repository!");
-    }
+
+    (void)printf("Opening repository #%d (%s).\n", opened->rid, opened->name);
+    app_pause(NULL);
+    return 1;
 }
 
-void view_repos()
+int repo(const Session *session, RepoRecord *opened_repo)
 {
-    system("cls");
+    int choice;
 
-    FILE *fptr;
-    struct repos r;
-    fptr = fopen("repos.dat", "rb");
-    if (fptr == NULL)
-    {
-        printf("An unexpected error occured");
-        exit(0);
-    }
-    printf("List of all your repositories:\n");
-    while (fread(&r, sizeof(r), 1, fptr) == 1)
-    {
-        if (strcmp(r.uid, usr.uid) == 0)
-        {
-            printf("%d\t%s\n", r.rid, r.name);
-        }
-    }
-}
-void open_repo(struct repos *rid)
-{
-    system("cls");
-    FILE *fptr;
-    struct repos r;
-    int flag = 1;
-    int temp_id;
-    fptr = fopen("repos.dat", "rb");
-    if (fptr == NULL)
-    {
-        printf("An unexpected error occured");
-        exit(0);
-    }
-    printf("Enter the id of the repository you want to open: ");
-    scanf(" %d", &temp_id);
-    while (fread(&r, sizeof(r), 1, fptr) == 1)
-    {
-        if (temp_id == r.rid && strcmp(r.uid, usr.uid) == 0)
-        {
-            printf("Opening repository %s", r.name);
-            *rid = r;
-            flag = 0;
-            openflag = 1;
-            break;
-        }
-    }
-    if (flag)
-    {
-        printf("Repository not found!");
-    }
-}
-
-int repo(struct user u, struct repos *rid)
-{
-    int ch;
-    usr = u;
     while (1)
     {
-        system("cls");
-        printf("--------------------------------------------------------------\n");
-        printf("____    ____  _______  __        ______     ______  _______\n");
-        printf("\\   \\  /   / |   ____||  |      /  __  \\   /      ||   ____|\n");
-        printf(" \\   \\/   /  |  |__   |  |     |  |  |  | |  ,----'|  |__\n");
-        printf("  \\      /   |   __|  |  |     |  |  |  | |  |     |   __|\n");
-        printf("   \\    /    |  |____ |  `----.|  `--'  | |  `----.|  |____\n");
-        printf("    \\__/     |_______||_______| \\______/   \\______||_______|\n");
-        printf("--------------------------------------------------------------\n");
-        printf("\nWelcome %s, how's it going?\n", u.name);
-        printf("1) Create a repository\n2) View Repositories\n3) Open Repository\n4) Exit\n");
-        printf("Enter your choice: ");
-        scanf("%d", &ch);
-        switch (ch)
+        app_clear_screen();
+        (void)printf("Welcome %s (%s)\n\n", session->name, session->username);
+        (void)printf("1) Create repository\n");
+        (void)printf("2) View repositories\n");
+        (void)printf("3) Open repository\n");
+        (void)printf("4) Logout\n");
+        (void)printf("5) Exit\n");
+
+        if (!read_int("Choice: ", &choice))
         {
-        case 1:
-            create_repo();
-            break;
-        case 2:
-            view_repos();
-            break;
-        case 3:
-            open_repo(rid);
-            break;
-        case 4:
-            exit(0);
-        default:
-            printf("Please enter a valid choice!");
-            getch();
+            (void)printf("Please enter a valid number.\n");
+            app_pause(NULL);
+            continue;
         }
-        if (openflag)
+
+        if (choice == 1)
         {
-            break;
+            create_repo(session);
         }
-        printf("\nPress any key to continue: ");
-        getch();
+        else if (choice == 2)
+        {
+            view_repos(session);
+        }
+        else if (choice == 3)
+        {
+            if (open_repo(session, opened_repo))
+            {
+                comm(opened_repo);
+            }
+        }
+        else if (choice == 4)
+        {
+            return 1;
+        }
+        else if (choice == 5)
+        {
+            return 0;
+        }
+        else
+        {
+            (void)printf("Please choose 1 to 5.\n");
+            app_pause(NULL);
+        }
     }
 }
+
