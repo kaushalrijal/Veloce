@@ -1,5 +1,6 @@
-user.dat
+.veloce/
+vcs
 vcs.exe
-commits.dat
-repos.dat
+build/
+*.dSYM/
 .vscode/
