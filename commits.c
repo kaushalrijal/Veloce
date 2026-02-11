@@ -128,10 +128,20 @@ static int update_repo_record(const RepoRecord *updated)
     while (fgets(line, sizeof(line), in) != NULL)
     {
         RepoRecord repo;
+        char raw[2048];
+
+        (void)snprintf(raw, sizeof(raw), "%s", line);
 
         line[strcspn(line, "\r\n")] = '\0';
         if (!parse_repo_line(line, &repo))
         {
+            if (fputs(raw, out) == EOF)
+            {
+                fclose(in);
+                fclose(out);
+                remove(tmp_path);
+                return 0;
+            }
             continue;
         }
 
@@ -665,4 +675,3 @@ void comm(RepoRecord *repo)
         }
     }
 }
-

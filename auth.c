@@ -221,10 +221,20 @@ static int update_user_password(const char *uid, const char *new_salt, const cha
     while (fgets(line, sizeof(line), in) != NULL)
     {
         UserRecord user;
+        char raw[2048];
+
+        (void)snprintf(raw, sizeof(raw), "%s", line);
 
         line[strcspn(line, "\r\n")] = '\0';
         if (!parse_user_line(line, &user))
         {
+            if (fputs(raw, out) == EOF)
+            {
+                fclose(in);
+                fclose(out);
+                remove(tmp_path);
+                return 0;
+            }
             continue;
         }
 
@@ -552,4 +562,3 @@ int verify_auth(Session *session)
         }
     }
 }
-
